@@ -365,6 +365,9 @@ async function apiFetch(url, options) {
 
 function apiBatchGet(ranges) {
   var qs = ranges.map(function (r) { return 'ranges=' + encodeURIComponent(r); }).join('&');
+  // UNFORMATTED_VALUE gives real numbers (no thousands-separator commas that break Number()).
+  // FORMATTED_STRING keeps dates as readable strings (e.g. "8/25/2026") instead of serial numbers.
+  qs += '&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING';
   return apiFetch(API_BASE + '/values:batchGet?' + qs);
 }
 
