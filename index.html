@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<title>Money Tracker</title>
+<script src="https://www.gstatic.com/charts/loader.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root{
+    --bg:#0b0d12; --card:#161922; --card2:#1d212c; --border:#272c38;
+    --text:#f0f2f7; --muted:#8b93a3; --accent:#22c55e; --accent2:#3b82f6;
+    --danger:#f43f5e; --navh:64px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  #app{max-width:520px;margin:0 auto;min-height:100vh;position:relative;}
+
+  /* ---- Sign-in gate ---- */
+  #signinGate{position:fixed;inset:0;background:var(--bg);z-index:50;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;}
+  #signinGate .logo{font-size:44px;margin-bottom:6px;}
+  #signinGate h1{font-size:19px;margin:0 0 6px;}
+  #signinGate p{color:var(--muted);font-size:13px;max-width:300px;margin:0 0 22px;}
+  #signinBtn{background:var(--accent2);color:#fff;border:none;padding:13px 26px;border-radius:12px;
+    font-size:14.5px;font-weight:700;cursor:pointer;}
+  #signinGate .err{color:var(--danger);font-size:12.5px;margin-top:14px;max-width:300px;}
+  #signinGate.hidden{display:none;}
+
+  .topbar{position:sticky;top:0;z-index:6;background:rgba(11,13,18,0.9);backdrop-filter:blur(10px);
+    padding:14px 16px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+  .topbar h1{font-size:17px;font-weight:700;margin:0;display:flex;align-items:center;gap:8px;}
+  .topbar .sub{font-size:11px;color:var(--muted);margin-top:2px;}
+  .syncdot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex-shrink:0;}
+  .syncdot.busy{background:var(--warn,#f59e0b);animation:pulse 1s infinite;}
+  .syncdot.ok{background:var(--accent);}
+  .syncdot.err{background:var(--danger);}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+  .content{padding:14px 14px calc(var(--navh) + 28px);}
+  .view{display:none;} .view.active{display:block;animation:fadeIn .18s ease;}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
+
+  .pillrow{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
+  .pill{padding:8px 15px;border-radius:999px;background:var(--card);color:var(--muted);font-size:12.5px;
+    font-weight:600;cursor:pointer;border:1px solid var(--border);}
+  .pill.active{background:var(--accent2);color:#fff;border-color:var(--accent2);}
+
+  .kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;}
+  .kpi{background:linear-gradient(155deg,var(--card),var(--card2));border:1px solid var(--border);
+    border-radius:16px;padding:15px;}
+  .kpi .label{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-weight:600;}
+  .kpi .value{font-size:19px;font-weight:800;margin-top:6px;letter-spacing:-.2px;}
+  .kpi.expense .value{color:var(--danger);}
+  .kpi.earning .value{color:var(--accent);}
+  .kpi.net .value{color:var(--accent2);}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;margin-bottom:14px;
+    box-shadow:0 8px 20px -12px rgba(0,0,0,0.6);}
+  .card h2{font-size:12.5px;color:var(--muted);margin:0 0 12px;text-transform:uppercase;letter-spacing:.6px;
+    font-weight:700;display:flex;align-items:center;justify-content:space-between;}
+  .chart{width:100%;height:220px;}
+  .chart.trend{height:230px;}
+
+  .filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;}
+  .filters .full{grid-column:1/-1;}
+  input,select{width:100%;background:var(--card2);border:1px solid var(--border);color:var(--text);
+    padding:11px 12px;border-radius:10px;font-size:14px;}
+  input:focus,select:focus{outline:none;border-color:var(--accent2);}
+  label{font-size:11px;color:var(--muted);display:block;margin-bottom:5px;font-weight:600;}
+  .field{margin-bottom:12px;}
+  button.primary{width:100%;background:var(--accent2);color:#fff;border:none;padding:14px;border-radius:12px;
+    font-size:15px;font-weight:700;cursor:pointer;transition:transform .08s;}
+  button.primary:active{transform:scale(0.98);}
+  button.primary:disabled{opacity:.6;}
+  button.primary.expense{background:var(--danger);}
+  button.primary.earning{background:var(--accent);color:#00220f;}
+  button.ghost{width:100%;background:var(--card2);border:1px solid var(--border);color:var(--text);
+    padding:12px;border-radius:12px;font-size:13.5px;font-weight:600;cursor:pointer;}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th,td{padding:9px 6px;text-align:left;border-bottom:1px solid var(--border);}
+  th{color:var(--muted);font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.3px;}
+  .amt-neg{color:var(--danger);font-weight:700;}
+  .amt-pos{color:var(--accent);font-weight:700;}
+  .num{text-align:right;}
+
+  .typebar{display:flex;gap:6px;margin-bottom:12px;}
+  .typebar .pill{flex:1;text-align:center;}
+
+  .toast{position:fixed;bottom:calc(var(--navh) + 16px);left:50%;transform:translateX(-50%);
+    background:var(--card2);border:1px solid var(--border);padding:11px 18px;border-radius:12px;
+    font-size:13px;display:none;max-width:88%;box-shadow:0 10px 24px -10px rgba(0,0,0,0.7);z-index:20;}
+  .muted-note{color:var(--muted);font-size:12.5px;text-align:center;padding:24px 0;}
+
+  .bottomnav{position:fixed;left:0;right:0;bottom:0;max-width:520px;margin:0 auto;
+    display:flex;align-items:center;justify-content:space-around;background:rgba(19,22,29,0.92);
+    backdrop-filter:blur(14px);border-top:1px solid var(--border);height:var(--navh);
+    padding-bottom:env(safe-area-inset-bottom);z-index:10;}
+  .navitem{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);
+    cursor:pointer;padding:6px 0;}
+  .navitem svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;}
+  .navitem span{font-size:10.5px;font-weight:600;}
+  .navitem.active{color:var(--accent2);}
+  .navitem.fabwrap{flex:1;display:flex;justify-content:center;position:relative;}
+  .fab{width:46px;height:46px;border-radius:50%;background:linear-gradient(155deg,var(--accent2),#6366f1);
+    display:flex;align-items:center;justify-content:center;box-shadow:0 8px 18px -6px rgba(59,130,246,0.6);margin-top:-18px;}
+  .fab svg{width:22px;height:22px;stroke:#fff;fill:none;stroke-width:2.2;}
+  .navitem.fabwrap.active .fab{background:linear-gradient(155deg,var(--danger),#f97316);}
+
+  .sidebar{display:none;}
+  .brand{font-size:15px;font-weight:800;margin-bottom:22px;padding:0 10px;display:flex;align-items:center;gap:8px;}
+  .chartsgrid{display:block;}
+
+  @media (min-width: 900px){
+    #app{max-width:none;}
+    .sidebar{display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;width:232px;
+      background:var(--card);border-right:1px solid var(--border);padding:26px 14px;gap:2px;z-index:8;}
+    .sidebar .navitem{flex:0 0 auto;flex-direction:row;justify-content:flex-start;gap:12px;
+      padding:12px 14px;border-radius:12px;width:100%;}
+    .sidebar .navitem svg{width:19px;height:19px;}
+    .sidebar .navitem span{font-size:13.5px;}
+    .sidebar .navitem.active{background:rgba(59,130,246,0.14);color:var(--accent2);}
+    .bottomnav{display:none;}
+    .toast{bottom:24px;}
+    .topbar{margin-left:232px;padding:22px 40px 18px;}
+    .content{margin-left:232px;padding:26px 40px 60px;max-width:1080px;}
+    .kpis{grid-template-columns:repeat(4,1fr);gap:14px;}
+    .kpi{padding:18px;} .kpi .value{font-size:23px;}
+    .chartsgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+    .chartsgrid .card{margin-bottom:0;}
+    .chartsgrid .card.full{grid-column:1/-1;}
+    .chart{height:250px;} .chart.trend{height:270px;}
+    .filters{grid-template-columns:repeat(4,1fr);}
+    .card{padding:20px;}
+    #view-add{max-width:460px;}
+  }
+</style>
+</head>
+<body>
+
+<div id="signinGate">
+  <div class="logo">💰</div>
+  <h1>Money Tracker</h1>
+  <p>Sign in with the Google account that owns your expense &amp; earnings sheet.</p>
+  <button id="signinBtn">Sign in with Google</button>
+  <div class="err" id="signinErr"></div>
+</div>
+
+<div id="app">
+  <nav class="sidebar">
+    <div class="brand">💰 Money Tracker</div>
+    <div class="navitem active" data-view="dashboard">
+      <svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10"/></svg><span>Dashboard</span>
+    </div>
+    <div class="navitem" data-view="reports">
+      <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg><span>Reports</span>
+    </div>
+    <div class="navitem" data-view="add">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Add Entry</span>
+    </div>
+  </nav>
+
+  <div class="topbar">
+    <div>
+      <h1>💰 Money Tracker</h1>
+      <div class="sub" id="topbarSub">Your day-to-day expense &amp; earnings, at a glance</div>
+    </div>
+    <div class="syncdot" id="syncDot" title="Sync status"></div>
+  </div>
+
+  <div class="content">
+
+    <div class="view active" id="view-dashboard">
+      <div class="pillrow" id="periodPills">
+        <div class="pill active" data-period="year">This Year</div>
+        <div class="pill" data-period="month">This Month</div>
+        <div class="pill" data-period="all">All Time</div>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi expense"><div class="label">Total Expense</div><div class="value" id="kpiExpense">৳0</div></div>
+        <div class="kpi earning"><div class="label">Total Earning</div><div class="value" id="kpiEarning">৳0</div></div>
+        <div class="kpi net"><div class="label">Net</div><div class="value" id="kpiNet">৳0</div></div>
+        <div class="kpi"><div class="label">Entries</div><div class="value" id="kpiCount">0</div></div>
+      </div>
+
+      <div class="chartsgrid">
+        <div class="card full"><h2>Monthly Trend</h2><div class="chart trend" id="trendChart"></div></div>
+        <div class="card"><h2>Expense by Category</h2><div class="chart" id="expenseChart"></div></div>
+        <div class="card"><h2>Earning by Medium</h2><div class="chart" id="mediumChart"></div></div>
+      </div>
+    </div>
+
+    <div class="view" id="view-reports">
+      <div class="typebar">
+        <div class="pill active" data-type="expense">Expense</div>
+        <div class="pill" data-type="earning">Earning</div>
+      </div>
+      <div class="card">
+        <div class="filters">
+          <div><label>From</label><input type="date" id="fFrom"></div>
+          <div><label>To</label><input type="date" id="fTo"></div>
+          <div><label>Category</label><select id="fCategory"><option value="">All</option></select></div>
+          <div id="fMediumWrap" style="display:none;"><label>Medium</label><select id="fMedium"><option value="">All</option></select></div>
+          <div class="full"><label>Search description</label><input type="text" id="fSearch" placeholder="Search..."></div>
+        </div>
+        <button class="ghost" id="applyFilters">Apply Filters</button>
+      </div>
+      <div class="card" style="overflow-x:auto;">
+        <h2 id="reportTitle">Expense Report</h2>
+        <table id="reportTable"><thead><tr id="reportHead"></tr></thead><tbody id="reportBody"></tbody></table>
+        <div class="muted-note" id="reportEmpty" style="display:none;">No entries found.</div>
+      </div>
+    </div>
+
+    <div class="view" id="view-add">
+      <div class="typebar">
+        <div class="pill active" data-addtype="expense">Expense</div>
+        <div class="pill" data-addtype="earning">Earning</div>
+      </div>
+      <div class="card" id="expenseForm">
+        <h2>New Expense</h2>
+        <div class="field"><label>Date</label><input type="date" id="exDate"></div>
+        <div class="field"><label>Category</label><input type="text" id="exCategory" list="expenseCategoryList" placeholder="e.g. Cost on Mine"></div>
+        <datalist id="expenseCategoryList"></datalist>
+        <div class="field"><label>Description</label><input type="text" id="exDescription" placeholder="e.g. Toll"></div>
+        <div class="field"><label>Cost (৳)</label><input type="number" step="0.01" id="exCost" placeholder="0.00"></div>
+        <button class="primary expense" id="submitExpense">Save Expense</button>
+      </div>
+      <div class="card" id="earningForm" style="display:none;">
+        <h2>New Earning</h2>
+        <div class="field"><label>Date</label><input type="date" id="erDate"></div>
+        <div class="field"><label>Category</label><input type="text" id="erCategory" list="earningCategoryList" placeholder="e.g. Salary"></div>
+        <datalist id="earningCategoryList"></datalist>
+        <div class="field"><label>Medium</label><input type="text" id="erMedium" list="earningMediumList" placeholder="e.g. BRAC"></div>
+        <datalist id="earningMediumList"></datalist>
+        <div class="field"><label>Description</label><input type="text" id="erDescription" placeholder="e.g. Salary from Optimizely exc PF"></div>
+        <div class="field"><label>Amount (৳)</label><input type="number" step="0.01" id="erAmount" placeholder="0.00"></div>
+        <button class="primary earning" id="submitEarning">Save Earning</button>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="bottomnav">
+    <div class="navitem active" data-view="dashboard">
+      <svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10"/></svg><span>Home</span>
+    </div>
+    <div class="navitem" data-view="reports">
+      <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg><span>Reports</span>
+    </div>
+    <div class="navitem fabwrap" data-view="add">
+      <div class="fab"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div><span>Add</span>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* =========================================================================
+ * CONFIG - fill these in before deploying (see SETUP.md)
+ * =======================================================================*/
+var APP_CONFIG = {
+  CLIENT_ID: '138569944209-mfb6icbulk89m0itfq4e5aiu7ctn19b7.apps.googleusercontent.com',
+  SPREADSHEET_ID: '1AbCdeFGhIJKlmnOPQRstuVWXyz1234567890',
+  EXPENSE_SHEET: 'Expense',
+  EARNING_SHEET: 'Earnings',
+  EXPENSE_COLS: { date: 'B', category: 'C', description: 'D', cost: 'E' },
+  EARNING_COLS: { date: 'B', month: 'C', category: 'D', medium: 'E', description: 'F', amount: 'G' },
+  EXPENSE_FALLBACK_START_ROW: 11,
+  EARNING_FALLBACK_START_ROW: 12,
+  SCAN_LIMIT: 60,
+  SORT_END_COLUMN_GUARD: 10 // safe upper bound (col J) used only to define the sort range width
+};
+
+var DEFAULTS = {
+  expenseCategories: ['Cost on Mine', 'Food', 'Transport', 'Bills', 'Shopping', 'Other'],
+  earningCategories: ['Salary', 'Business', 'Freelance', 'Other'],
+  earningMediums: ['BRAC', 'Cash', 'bKash', 'Nagad', 'Card', 'Other']
+};
+
+/* =========================================================================
+ * AUTH (Google Identity Services - client-side OAuth token flow)
+ * =======================================================================*/
+var accessToken = null;
+var tokenClient = null;
+var sheetIdMap = null; // {title: numericSheetId}
+
+function initAuth() {
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: APP_CONFIG.CLIENT_ID,
+    scope: 'https://www.googleapis.com/auth/spreadsheets',
+    callback: onTokenResponse
+  });
+
+  var saved = sessionStorage.getItem('mt_token');
+  var exp = Number(sessionStorage.getItem('mt_token_exp') || 0);
+  if (saved && Date.now() < exp) {
+    accessToken = saved;
+    onSignedIn();
+  }
+}
+
+function onTokenResponse(resp) {
+  if (resp.error) {
+    document.getElementById('signinErr').textContent = 'Sign-in failed: ' + resp.error;
+    return;
+  }
+  accessToken = resp.access_token;
+  var expiresInMs = (resp.expires_in || 3500) * 1000;
+  sessionStorage.setItem('mt_token', accessToken);
+  sessionStorage.setItem('mt_token_exp', String(Date.now() + expiresInMs - 60000));
+  onSignedIn();
+}
+
+function onSignedIn() {
+  document.getElementById('signinGate').classList.add('hidden');
+  loadEverything();
+}
+
+document.getElementById('signinBtn').addEventListener('click', function () {
+  document.getElementById('signinErr').textContent = '';
+  tokenClient.requestAccessToken();
+});
+
+function requireReauth() {
+  sessionStorage.removeItem('mt_token');
+  sessionStorage.removeItem('mt_token_exp');
+  accessToken = null;
+  document.getElementById('signinGate').classList.remove('hidden');
+  document.getElementById('signinErr').textContent = 'Your session expired - please sign in again.';
+}
+
+/* =========================================================================
+ * SHEETS API
+ * =======================================================================*/
+var API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets/' + APP_CONFIG.SPREADSHEET_ID;
+
+async function apiFetch(url, options) {
+  options = options || {};
+  options.headers = Object.assign({ Authorization: 'Bearer ' + accessToken }, options.headers || {});
+  var res = await fetch(url, options);
+  if (res.status === 401) {
+    requireReauth();
+    throw new Error('Session expired - please sign in again.');
+  }
+  if (!res.ok) {
+    var body = await res.text();
+    throw new Error('Sheets API error (' + res.status + '): ' + body.slice(0, 200));
+  }
+  return res.json();
+}
+
+function apiBatchGet(ranges) {
+  var qs = ranges.map(function (r) { return 'ranges=' + encodeURIComponent(r); }).join('&');
+  return apiFetch(API_BASE + '/values:batchGet?' + qs);
+}
+
+function apiAppend(range, values) {
+  var url = API_BASE + '/values/' + encodeURIComponent(range) +
+    ':append?valueInputOption=USER_ENTERED&insertDataOption=OVERWRITE';
+  return apiFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ range: range, majorDimension: 'ROWS', values: values })
+  });
+}
+
+function apiBatchUpdate(requests) {
+  return apiFetch(API_BASE + ':batchUpdate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requests: requests })
+  });
+}
+
+async function ensureSheetIdMap() {
+  if (sheetIdMap) return sheetIdMap;
+  var data = await apiFetch(API_BASE + '?fields=sheets.properties');
+  sheetIdMap = {};
+  (data.sheets || []).forEach(function (s) {
+    sheetIdMap[s.properties.title] = s.properties.sheetId;
+  });
+  return sheetIdMap;
+}
+
+/* =========================================================================
+ * Small helpers (ported from the old Apps Script logic)
+ * =======================================================================*/
+function colIndex1(letter) { return letter.toUpperCase().charCodeAt(0) - 64; } // 1-based
+function colIndex0(letter) { return colIndex1(letter) - 1; }                   // 0-based
+
+function looksLikeDate(str) {
+  return typeof str === 'string' && /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(str) && !isNaN(new Date(str).getTime());
+}
+
+function findDataStartRow(scanValues, fallbackRow) {
+  if (!scanValues) return fallbackRow;
+  for (var i = 0; i < scanValues.length; i++) {
+    var v = scanValues[i] && scanValues[i][0];
+    if (looksLikeDate(v)) return i + 1;
+  }
+  return fallbackRow;
+}
+
+function toIso(dateStr) {
+  var d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  var y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
+
+function isoToSheetDate(iso) {
+  var parts = iso.split('-');
+  return Number(parts[1]) + '/' + Number(parts[2]) + '/' + parts[0]; // M/D/YYYY
+}
+
+function round2(n) { return Math.round(n * 100) / 100; }
+function sum(arr) { return arr.reduce(function (a, b) { return a + (Number(b) || 0); }, 0); }
+
+function uniqueSorted(arr) {
+  var set = {};
+  arr.forEach(function (v) { if (v) set[v] = true; });
+  return Object.keys(set).sort();
+}
+
+function groupSum(rows, keyField, valField) {
+  var totals = {};
+  rows.forEach(function (r) {
+    var key = r[keyField] || 'Other';
+    totals[key] = (totals[key] || 0) + (Number(r[valField]) || 0);
+  });
+  return Object.keys(totals)
+    .map(function (k) { return { name: k, value: round2(totals[k]) }; })
+    .sort(function (a, b) { return b.value - a.value; });
+}
+
+function sanitizeText(raw, maxLen, fallback) {
+  var s = (raw === null || raw === undefined) ? '' : String(raw);
+  s = s.replace(/[<>]/g, '').trim();
+  if (!s) s = fallback || '';
+  if (s.length > maxLen) s = s.substring(0, maxLen);
+  return s;
+}
+
+function validateAmount(raw) {
+  var n = Number(raw);
+  if (!isFinite(n) || isNaN(n)) throw new Error('Amount must be a valid number.');
+  if (n < 0) throw new Error('Amount cannot be negative.');
+  return round2(n);
+}
+
+function validateDateInput(raw) {
+  if (!raw) throw new Error('Date is required.');
+  var d = new Date(raw);
+  if (isNaN(d.getTime())) throw new Error('That date is not valid.');
+  return raw; // already yyyy-mm-dd from <input type=date>
+}
+
+/* =========================================================================
+ * DATA LAYER - fetch, parse, add
+ * =======================================================================*/
+var STATE = { expenses: [], earnings: [], expenseStartRow: null, earningStartRow: null, meta: null };
+
+function parseRows(values, mapper) {
+  var out = [];
+  (values || []).forEach(function (r) {
+    var iso = toIso(r[0]);
+    if (!iso) return;
+    out.push(mapper(iso, r));
+  });
+  return out;
+}
+
+async function fetchAllData() {
+  var ex = APP_CONFIG.EXPENSE_COLS, ea = APP_CONFIG.EARNING_COLS;
+
+  // Pass 1: scan just the date columns to auto-detect where real data starts
+  var scanRanges = [
+    APP_CONFIG.EXPENSE_SHEET + '!' + ex.date + '1:' + ex.date + APP_CONFIG.SCAN_LIMIT,
+    APP_CONFIG.EARNING_SHEET + '!' + ea.date + '1:' + ea.date + APP_CONFIG.SCAN_LIMIT
+  ];
+  var scanRes = await apiBatchGet(scanRanges);
+  var expenseStart = findDataStartRow((scanRes.valueRanges[0] || {}).values, APP_CONFIG.EXPENSE_FALLBACK_START_ROW);
+  var earningStart = findDataStartRow((scanRes.valueRanges[1] || {}).values, APP_CONFIG.EARNING_FALLBACK_START_ROW);
+
+  // Pass 2: pull the actual data, one combined call
+  var dataRanges = [
+    APP_CONFIG.EXPENSE_SHEET + '!' + ex.date + expenseStart + ':' + ex.cost,
+    APP_CONFIG.EARNING_SHEET + '!' + ea.date + earningStart + ':' + ea.amount
+  ];
+  var dataRes = await apiBatchGet(dataRanges);
+
+  var expenses = parseRows((dataRes.valueRanges[0] || {}).values, function (iso, r) {
+    return { date: iso, category: String(r[1] || ''), description: String(r[2] || ''), cost: Number(r[3]) || 0 };
+  });
+
+  var earnings = parseRows((dataRes.valueRanges[1] || {}).values, function (iso, r) {
+    return {
+      date: iso, month: String(r[1] || ''), category: String(r[2] || ''),
+      medium: String(r[3] || ''), description: String(r[4] || ''), amount: Number(r[5]) || 0
+    };
+  });
+
+  STATE.expenses = expenses;
+  STATE.earnings = earnings;
+  STATE.expenseStartRow = expenseStart;
+  STATE.earningStartRow = earningStart;
+  STATE.meta = buildMeta(expenses, earnings);
+}
+
+function buildMeta(expenses, earnings) {
+  var expenseCategories = uniqueSorted(expenses.map(function (e) { return e.category; }));
+  var earningCategories = uniqueSorted(earnings.map(function (e) { return e.category; }));
+  var earningMediums = uniqueSorted(earnings.map(function (e) { return e.medium; }));
+  return {
+    expenseCategories: expenseCategories.length ? expenseCategories : DEFAULTS.expenseCategories,
+    earningCategories: earningCategories.length ? earningCategories : DEFAULTS.earningCategories,
+    earningMediums: earningMediums.length ? earningMediums : DEFAULTS.earningMediums
+  };
+}
+
+async function appendAndSort(sheetName, startRow, rowsBefore, appendRange, rowValues, dateColLetter) {
+  await ensureSheetIdMap();
+  var sheetId = sheetIdMap[sheetName];
+  if (sheetId === undefined) throw new Error('Sheet "' + sheetName + '" not found.');
+
+  // Append to the next empty row after the existing table - no row insertion, ever.
+  await apiAppend(appendRange, [rowValues]);
+
+  var newLastRow = startRow + rowsBefore.length; // rowsBefore.length existing rows + the 1 just appended
+  await apiBatchUpdate([{
+    sortRange: {
+      range: {
+        sheetId: sheetId,
+        startRowIndex: startRow - 1,
+        endRowIndex: newLastRow,
+        startColumnIndex: 1, // column B onward only - column A (SI/SEQUENCE formula) is never touched
+        endColumnIndex: APP_CONFIG.SORT_END_COLUMN_GUARD
+      },
+      sortSpecs: [{ dimensionIndex: colIndex0(dateColLetter), sortOrder: 'DESCENDING' }]
+    }
+  }]);
+}
+
+async function addExpense(payload) {
+  var iso = validateDateInput(payload.date);
+  var category = sanitizeText(payload.category, 60, 'Uncategorized');
+  var description = sanitizeText(payload.description, 200, '');
+  var cost = validateAmount(payload.cost);
+  var cfg = APP_CONFIG.EXPENSE_COLS;
+
+  var row = [isoToSheetDate(iso), category, description, cost];
+  var appendRange = APP_CONFIG.EXPENSE_SHEET + '!' + cfg.date + STATE.expenseStartRow + ':' + cfg.cost;
+  await appendAndSort(APP_CONFIG.EXPENSE_SHEET, STATE.expenseStartRow, STATE.expenses, appendRange, row, cfg.date);
+}
+
+async function addEarning(payload) {
+  var iso = validateDateInput(payload.date);
+  var category = sanitizeText(payload.category, 60, 'Uncategorized');
+  var medium = sanitizeText(payload.medium, 60, 'Other');
+  var description = sanitizeText(payload.description, 200, '');
+  var amount = validateAmount(payload.amount);
+  var cfg = APP_CONFIG.EARNING_COLS;
+
+  var d = new Date(iso);
+  var monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var month = monthNames[d.getMonth()] + '-' + d.getFullYear();
+
+  var row = [isoToSheetDate(iso), month, category, medium, description, amount];
+  var appendRange = APP_CONFIG.EARNING_SHEET + '!' + cfg.date + STATE.earningStartRow + ':' + cfg.amount;
+  await appendAndSort(APP_CONFIG.EARNING_SHEET, STATE.earningStartRow, STATE.earnings, appendRange, row, cfg.date);
+}
+
+/* =========================================================================
+ * Dashboard / trend computation (pure functions over STATE)
+ * =======================================================================*/
+function filterByPeriod(expenses, earnings, period) {
+  if (period === 'all') return { expenses: expenses, earnings: earnings };
+  var now = new Date();
+  var cutoff = (period === 'year') ? new Date(now.getFullYear(), 0, 1) : new Date(now.getFullYear(), now.getMonth(), 1);
+  var cutoffIso = toIso(cutoff);
+  return {
+    expenses: expenses.filter(function (r) { return r.date >= cutoffIso; }),
+    earnings: earnings.filter(function (r) { return r.date >= cutoffIso; })
+  };
+}
+
+function buildDashboard(expenses, earnings, period) {
+  period = (['year', 'month', 'all'].indexOf(period) === -1) ? 'year' : period;
+  var scoped = filterByPeriod(expenses, earnings, period);
+  return {
+    period: period,
+    totalExpense: round2(sum(scoped.expenses.map(function (r) { return r.cost; }))),
+    totalEarning: round2(sum(scoped.earnings.map(function (r) { return r.amount; }))),
+    net: round2(sum(scoped.earnings.map(function (r) { return r.amount; })) - sum(scoped.expenses.map(function (r) { return r.cost; }))),
+    expenseCount: scoped.expenses.length,
+    earningCount: scoped.earnings.length,
+    expenseByCategory: groupSum(scoped.expenses, 'category', 'cost'),
+    earningByMedium: groupSum(scoped.earnings, 'medium', 'amount'),
+    trend: buildTrend(expenses, earnings, period)
+  };
+}
+
+function buildTrend(expenses, earnings, period) {
+  var now = new Date();
+
+  if (period === 'month') {
+    var year = now.getFullYear(), month = now.getMonth();
+    var daysInMonth = new Date(year, month + 1, 0).getDate();
+    var buckets = [], byKey = {};
+    for (var d = 1; d <= daysInMonth; d++) {
+      var key = toIso(new Date(year, month, d));
+      var b = { key: key, label: String(d), expense: 0, earning: 0 };
+      buckets.push(b); byKey[key] = b;
+    }
+    expenses.forEach(function (r) { if (byKey[r.date]) byKey[r.date].expense += Number(r.cost) || 0; });
+    earnings.forEach(function (r) { if (byKey[r.date]) byKey[r.date].earning += Number(r.amount) || 0; });
+    return buckets.map(function (b) { return { label: b.label, expense: round2(b.expense), earning: round2(b.earning) }; });
+  }
+
+  var buckets2 = [], byKey2 = {};
+  var monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  if (period === 'year') {
+    for (var m = 0; m <= now.getMonth(); m++) {
+      var dt = new Date(now.getFullYear(), m, 1);
+      var k = dt.getFullYear() + '-' + String(m + 1).padStart(2, '0');
+      var b2 = { key: k, label: monthNames[m], expense: 0, earning: 0 };
+      buckets2.push(b2); byKey2[k] = b2;
+    }
+  } else {
+    var allDates = expenses.map(function (r) { return r.date; }).concat(earnings.map(function (r) { return r.date; }));
+    if (!allDates.length) return [];
+    allDates.sort();
+    var first = new Date(allDates[0]);
+    var cursor = new Date(first.getFullYear(), first.getMonth(), 1);
+    var end = new Date(now.getFullYear(), now.getMonth(), 1);
+    while (cursor <= end) {
+      var k2 = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0');
+      var b3 = { key: k2, label: monthNames[cursor.getMonth()] + ' ' + cursor.getFullYear(), expense: 0, earning: 0 };
+      buckets2.push(b3); byKey2[k2] = b3;
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    }
+  }
+
+  expenses.forEach(function (r) { var k = r.date.substring(0, 7); if (byKey2[k]) byKey2[k].expense += Number(r.cost) || 0; });
+  earnings.forEach(function (r) { var k = r.date.substring(0, 7); if (byKey2[k]) byKey2[k].earning += Number(r.amount) || 0; });
+  return buckets2.map(function (b) { return { label: b.label, expense: round2(b.expense), earning: round2(b.earning) }; });
+}
+
+/* =========================================================================
+ * UI wiring
+ * =======================================================================*/
+var currentPeriod = 'year';
+var currentReportType = 'expense';
+var chartsReady = false;
+
+var subtitles = {
+  dashboard: "Your day-to-day expense & earnings, at a glance",
+  reports: "Filter and review every entry",
+  add: "Log a new expense or earning"
+};
+
+function setSync(state) {
+  var dot = document.getElementById('syncDot');
+  dot.className = 'syncdot ' + (state || '');
+}
+
+function showToast(msg, isError) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.borderColor = isError ? 'var(--danger)' : 'var(--accent)';
+  t.style.display = 'block';
+  setTimeout(function () { t.style.display = 'none'; }, 2600);
+}
+
+function fmtMoney(n) {
+  n = Number(n) || 0;
+  var sign = n < 0 ? '-' : '';
+  return sign + '৳' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function clearNode(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+document.querySelectorAll('.navitem').forEach(function (item) {
+  item.addEventListener('click', function () {
+    document.querySelectorAll('.navitem').forEach(function (t) { t.classList.remove('active'); });
+    document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); });
+    document.querySelectorAll('.navitem[data-view="' + item.dataset.view + '"]').forEach(function (t) { t.classList.add('active'); });
+    document.getElementById('view-' + item.dataset.view).classList.add('active');
+    document.getElementById('topbarSub').textContent = subtitles[item.dataset.view] || '';
+    if (item.dataset.view === 'reports') runReport();
+  });
+});
+
+document.querySelectorAll('#periodPills .pill').forEach(function (p) {
+  p.addEventListener('click', function () {
+    document.querySelectorAll('#periodPills .pill').forEach(function (x) { x.classList.remove('active'); });
+    p.classList.add('active');
+    currentPeriod = p.dataset.period;
+    renderDashboard(buildDashboard(STATE.expenses, STATE.earnings, currentPeriod));
+  });
+});
+
+function renderDashboard(data) {
+  document.getElementById('kpiExpense').textContent = fmtMoney(data.totalExpense);
+  document.getElementById('kpiEarning').textContent = fmtMoney(data.totalEarning);
+  document.getElementById('kpiNet').textContent = fmtMoney(data.net);
+  document.getElementById('kpiCount').textContent = data.expenseCount + data.earningCount;
+  drawPie('expenseChart', data.expenseByCategory, ['#f43f5e','#f59e0b','#fb7185','#f97316','#eab308','#dc2626']);
+  drawPie('mediumChart', data.earningByMedium, ['#22c55e','#3b82f6','#06b6d4','#84cc16','#14b8a6','#6366f1']);
+  drawTrend(data.trend);
+}
+
+function drawPie(elId, rows, colors) {
+  var el = document.getElementById(elId);
+  if (!chartsReady) return;
+  var clean = (rows || []).map(function (r) { return { name: r.name, value: Math.abs(Number(r.value) || 0) }; })
+    .filter(function (r) { return r.value > 0; });
+  if (!clean.length) { el.innerHTML = '<div class="muted-note">No data yet</div>'; return; }
+  var dt = new google.visualization.DataTable();
+  dt.addColumn('string', 'Name'); dt.addColumn('number', 'Value');
+  clean.forEach(function (r) { dt.addRow([r.name, r.value]); });
+  new google.visualization.PieChart(el).draw(dt, {
+    backgroundColor: 'transparent', chartArea: { width: '90%', height: '80%' },
+    legend: { textStyle: { color: '#8b93a3', fontSize: 11 } },
+    pieSliceTextStyle: { color: '#0b0d12' }, colors: colors, is3D: false
+  });
+}
+
+function drawTrend(rows) {
+  var el = document.getElementById('trendChart');
+  if (!chartsReady) return;
+  if (!rows || !rows.length) { el.innerHTML = '<div class="muted-note">No data yet</div>'; return; }
+  var dt = new google.visualization.DataTable();
+  dt.addColumn('string', 'Month'); dt.addColumn('number', 'Expense'); dt.addColumn('number', 'Earning');
+  rows.forEach(function (r) { dt.addRow([r.label, r.expense, r.earning]); });
+  new google.visualization.ColumnChart(el).draw(dt, {
+    backgroundColor: 'transparent', chartArea: { width: '86%', height: '72%' },
+    legend: { position: 'top', textStyle: { color: '#8b93a3', fontSize: 11 } },
+    colors: ['#f43f5e', '#22c55e'],
+    hAxis: { textStyle: { color: '#8b93a3', fontSize: 10 }, gridlines: { color: 'transparent' } },
+    vAxis: { textStyle: { color: '#8b93a3', fontSize: 10 }, gridlines: { color: '#272c38' } },
+    bar: { groupWidth: '65%' }
+  });
+}
+
+document.querySelectorAll('.typebar').forEach(function (bar) {
+  bar.querySelectorAll('[data-type]').forEach(function (p) {
+    p.addEventListener('click', function () {
+      bar.querySelectorAll('[data-type]').forEach(function (x) { x.classList.remove('active'); });
+      p.classList.add('active');
+      currentReportType = p.dataset.type;
+      document.getElementById('fMediumWrap').style.display = (currentReportType === 'earning') ? 'block' : 'none';
+      document.getElementById('reportTitle').textContent = (currentReportType === 'earning' ? 'Earning' : 'Expense') + ' Report';
+      populateCategoryFilter();
+      runReport();
+    });
+  });
+});
+
+document.getElementById('applyFilters').addEventListener('click', runReport);
+
+function populateCategoryFilter() {
+  var sel = document.getElementById('fCategory');
+  sel.innerHTML = '<option value="">All</option>';
+  var cats = currentReportType === 'earning' ? STATE.meta.earningCategories : STATE.meta.expenseCategories;
+  cats.forEach(function (c) { var o = document.createElement('option'); o.value = c; o.textContent = c; sel.appendChild(o); });
+  var medSel = document.getElementById('fMedium');
+  medSel.innerHTML = '<option value="">All</option>';
+  STATE.meta.earningMediums.forEach(function (m) { var o = document.createElement('option'); o.value = m; o.textContent = m; medSel.appendChild(o); });
+}
+
+function applyCommonFilters(rows, filter, searchFields) {
+  return rows.filter(function (r) {
+    if (filter.from && r.date < filter.from) return false;
+    if (filter.to && r.date > filter.to) return false;
+    if (filter.category && String(r.category || '').toLowerCase() !== filter.category.toLowerCase()) return false;
+    if (filter.medium && String(r.medium || '').toLowerCase() !== filter.medium.toLowerCase()) return false;
+    if (filter.search) {
+      var hay = searchFields.map(function (f) { return String(r[f] || '').toLowerCase(); }).join(' ');
+      if (hay.indexOf(filter.search.toLowerCase()) === -1) return false;
+    }
+    return true;
+  });
+}
+
+function runReport() {
+  var filter = {
+    from: document.getElementById('fFrom').value || null,
+    to: document.getElementById('fTo').value || null,
+    category: document.getElementById('fCategory').value || null,
+    search: document.getElementById('fSearch').value || null
+  };
+  if (currentReportType === 'earning') {
+    filter.medium = document.getElementById('fMedium').value || null;
+    var rows = applyCommonFilters(STATE.earnings, filter, ['category', 'medium', 'description']);
+    rows.sort(function (a, b) { return b.date < a.date ? -1 : (b.date > a.date ? 1 : 0); });
+    renderEarningReport(rows);
+  } else {
+    var rows2 = applyCommonFilters(STATE.expenses, filter, ['category', 'description']);
+    rows2.sort(function (a, b) { return b.date < a.date ? -1 : (b.date > a.date ? 1 : 0); });
+    renderExpenseReport(rows2);
+  }
+}
+
+function renderExpenseReport(rows) {
+  var head = document.getElementById('reportHead'); clearNode(head);
+  ['Date','Category','Description','Cost'].forEach(function (h, i) {
+    var th = document.createElement('th'); th.textContent = h; if (i === 3) th.className = 'num'; head.appendChild(th);
+  });
+  var body = document.getElementById('reportBody'); clearNode(body);
+  document.getElementById('reportEmpty').style.display = rows.length ? 'none' : 'block';
+  var total = 0;
+  rows.forEach(function (r) {
+    var cost = Number(r.cost) || 0; total += cost;
+    var tr = document.createElement('tr');
+    [r.date, r.category, r.description].forEach(function (val) { var td = document.createElement('td'); td.textContent = val; tr.appendChild(td); });
+    var td = document.createElement('td'); td.textContent = fmtMoney(cost);
+    td.className = 'num ' + (cost < 0 ? 'amt-pos' : 'amt-neg'); tr.appendChild(td);
+    body.appendChild(tr);
+  });
+  addTotalRow(body, 4, total, total < 0 ? 'amt-pos' : 'amt-neg');
+}
+
+function renderEarningReport(rows) {
+  var head = document.getElementById('reportHead'); clearNode(head);
+  ['Date','Category','Medium','Description','Amount'].forEach(function (h, i) {
+    var th = document.createElement('th'); th.textContent = h; if (i === 4) th.className = 'num'; head.appendChild(th);
+  });
+  var body = document.getElementById('reportBody'); clearNode(body);
+  document.getElementById('reportEmpty').style.display = rows.length ? 'none' : 'block';
+  var total = 0;
+  rows.forEach(function (r) {
+    total += Number(r.amount) || 0;
+    var tr = document.createElement('tr');
+    [r.date, r.category, r.medium, r.description].forEach(function (val) { var td = document.createElement('td'); td.textContent = val; tr.appendChild(td); });
+    var td = document.createElement('td'); td.textContent = fmtMoney(r.amount); td.className = 'num amt-pos'; tr.appendChild(td);
+    body.appendChild(tr);
+  });
+  addTotalRow(body, 5, total, 'amt-pos');
+}
+
+function addTotalRow(body, colSpan, total, cls) {
+  var tr = document.createElement('tr');
+  var td1 = document.createElement('td'); td1.colSpan = colSpan - 1; td1.textContent = 'Total'; td1.style.fontWeight = '700';
+  var td2 = document.createElement('td'); td2.textContent = fmtMoney(total); td2.className = 'num ' + cls; td2.style.fontWeight = '700';
+  tr.appendChild(td1); tr.appendChild(td2); body.appendChild(tr);
+}
+
+document.querySelectorAll('[data-addtype]').forEach(function (p) {
+  p.addEventListener('click', function () {
+    document.querySelectorAll('[data-addtype]').forEach(function (x) { x.classList.remove('active'); });
+    p.classList.add('active');
+    var isExpense = p.dataset.addtype === 'expense';
+    document.getElementById('expenseForm').style.display = isExpense ? 'block' : 'none';
+    document.getElementById('earningForm').style.display = isExpense ? 'none' : 'block';
+  });
+});
+
+function todayStr() {
+  var d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+document.getElementById('exDate').value = todayStr();
+document.getElementById('erDate').value = todayStr();
+
+document.getElementById('submitExpense').addEventListener('click', async function () {
+  var btn = this; btn.disabled = true; setSync('busy');
+  try {
+    await addExpense({
+      date: document.getElementById('exDate').value,
+      category: document.getElementById('exCategory').value,
+      description: document.getElementById('exDescription').value,
+      cost: document.getElementById('exCost').value
+    });
+    showToast('Expense saved ✔');
+    document.getElementById('exDescription').value = '';
+    document.getElementById('exCost').value = '';
+    await loadEverything();
+  } catch (err) {
+    setSync('err'); showToast('Error: ' + err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('submitEarning').addEventListener('click', async function () {
+  var btn = this; btn.disabled = true; setSync('busy');
+  try {
+    await addEarning({
+      date: document.getElementById('erDate').value,
+      category: document.getElementById('erCategory').value,
+      medium: document.getElementById('erMedium').value,
+      description: document.getElementById('erDescription').value,
+      amount: document.getElementById('erAmount').value
+    });
+    showToast('Earning saved ✔');
+    document.getElementById('erDescription').value = '';
+    document.getElementById('erAmount').value = '';
+    await loadEverything();
+  } catch (err) {
+    setSync('err'); showToast('Error: ' + err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function loadEverything() {
+  setSync('busy');
+  try {
+    await fetchAllData();
+    fillDatalist('expenseCategoryList', STATE.meta.expenseCategories);
+    fillDatalist('earningCategoryList', STATE.meta.earningCategories);
+    fillDatalist('earningMediumList', STATE.meta.earningMediums);
+    populateCategoryFilter();
+    renderDashboard(buildDashboard(STATE.expenses, STATE.earnings, currentPeriod));
+    if (document.getElementById('view-reports').classList.contains('active')) runReport();
+    setSync('ok');
+  } catch (err) {
+    setSync('err');
+    showToast('Error loading data: ' + err.message, true);
+  }
+}
+
+function fillDatalist(id, values) {
+  var dl = document.getElementById(id); clearNode(dl);
+  values.forEach(function (v) { var o = document.createElement('option'); o.value = v; dl.appendChild(o); });
+}
+
+google.charts.load('current', { packages: ['corechart'] });
+google.charts.setOnLoadCallback(function () { chartsReady = true; if (accessToken) renderDashboard(buildDashboard(STATE.expenses, STATE.earnings, currentPeriod)); });
+
+window.addEventListener('load', function () {
+  if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(function () {}); }
+  initAuth();
+});
+</script>
+</body>
+</html>
