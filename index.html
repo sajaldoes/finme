@@ -273,11 +273,15 @@ var APP_CONFIG = {
   SPREADSHEET_ID: '1WUCjr8xOg7oOB0CTOq1WtXLu5-_AQVfyjuirrXv3tiM',
   EXPENSE_SHEET: 'Expense',
   EARNING_SHEET: 'Earnings',
+
+  // Fixed rows - same scheme as your working Apps Script version:
+  //   Expense:  Row 10 = Header, Row 11 = First data row, Row 12 = Insert new entry here
+  //   Earnings: Row 9  = Header, Row 10 = First data row, Row 11 = Insert new entry here
+  EXPENSE_HEADER_ROW: 10,
+  EARNING_HEADER_ROW: 9,
+
   EXPENSE_COLS: { date: 'B', category: 'C', description: 'D', cost: 'E' },
   EARNING_COLS: { date: 'B', month: 'C', category: 'D', medium: 'E', description: 'F', amount: 'G' },
-  EXPENSE_FALLBACK_START_ROW: 11,
-  EARNING_FALLBACK_START_ROW: 12,
-  SCAN_LIMIT: 60,
   SORT_END_COLUMN_GUARD: 10 // safe upper bound (col J) used only to define the sort range width
 };
 
@@ -364,16 +368,6 @@ function apiBatchGet(ranges) {
   return apiFetch(API_BASE + '/values:batchGet?' + qs);
 }
 
-function apiAppend(range, values) {
-  var url = API_BASE + '/values/' + encodeURIComponent(range) +
-    ':append?valueInputOption=USER_ENTERED&insertDataOption=OVERWRITE';
-  return apiFetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ range: range, majorDimension: 'ROWS', values: values })
-  });
-}
-
 function apiBatchUpdate(requests) {
   return apiFetch(API_BASE + ':batchUpdate', {
     method: 'POST',
@@ -397,19 +391,6 @@ async function ensureSheetIdMap() {
  * =======================================================================*/
 function colIndex1(letter) { return letter.toUpperCase().charCodeAt(0) - 64; } // 1-based
 function colIndex0(letter) { return colIndex1(letter) - 1; }                   // 0-based
-
-function looksLikeDate(str) {
-  return typeof str === 'string' && /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(str) && !isNaN(new Date(str).getTime());
-}
-
-function findDataStartRow(scanValues, fallbackRow) {
-  if (!scanValues) return fallbackRow;
-  for (var i = 0; i < scanValues.length; i++) {
-    var v = scanValues[i] && scanValues[i][0];
-    if (looksLikeDate(v)) return i + 1;
-  }
-  return fallbackRow;
-}
 
 function toIso(dateStr) {
   var d = new Date(dateStr);
@@ -482,17 +463,9 @@ function parseRows(values, mapper) {
 
 async function fetchAllData() {
   var ex = APP_CONFIG.EXPENSE_COLS, ea = APP_CONFIG.EARNING_COLS;
+  var expenseStart = APP_CONFIG.EXPENSE_HEADER_ROW + 1; // row 11
+  var earningStart = APP_CONFIG.EARNING_HEADER_ROW + 1; // row 10
 
-  // Pass 1: scan just the date columns to auto-detect where real data starts
-  var scanRanges = [
-    APP_CONFIG.EXPENSE_SHEET + '!' + ex.date + '1:' + ex.date + APP_CONFIG.SCAN_LIMIT,
-    APP_CONFIG.EARNING_SHEET + '!' + ea.date + '1:' + ea.date + APP_CONFIG.SCAN_LIMIT
-  ];
-  var scanRes = await apiBatchGet(scanRanges);
-  var expenseStart = findDataStartRow((scanRes.valueRanges[0] || {}).values, APP_CONFIG.EXPENSE_FALLBACK_START_ROW);
-  var earningStart = findDataStartRow((scanRes.valueRanges[1] || {}).values, APP_CONFIG.EARNING_FALLBACK_START_ROW);
-
-  // Pass 2: pull the actual data, one combined call
   var dataRanges = [
     APP_CONFIG.EXPENSE_SHEET + '!' + ex.date + expenseStart + ':' + ex.cost,
     APP_CONFIG.EARNING_SHEET + '!' + ea.date + earningStart + ':' + ea.amount
@@ -528,20 +501,50 @@ function buildMeta(expenses, earnings) {
   };
 }
 
-async function appendAndSort(sheetName, startRow, rowsBefore, appendRange, rowValues, dateColLetter) {
+async function apiUpdateValues(range, values) {
+  var url = API_BASE + '/values/' + encodeURIComponent(range) + '?valueInputOption=USER_ENTERED';
+  return apiFetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ range: range, majorDimension: 'ROWS', values: values })
+  });
+}
+
+/**
+ * Inserts a new row at headerRow+2 (never at the header or first-data row),
+ * writes the entry there, then sorts columns B onward from headerRow+1 down -
+ * exactly the scheme from the working Apps Script version. Column A (the
+ * SI/SEQUENCE formula) is never included in the sort and never has a row
+ * inserted directly on top of it.
+ */
+async function insertWriteSort(sheetName, headerRow, rowsBefore, numCols, rowValues, dateColLetter) {
   await ensureSheetIdMap();
   var sheetId = sheetIdMap[sheetName];
   if (sheetId === undefined) throw new Error('Sheet "' + sheetName + '" not found.');
 
-  // Append to the next empty row after the existing table - no row insertion, ever.
-  await apiAppend(appendRange, [rowValues]);
+  var dataStartRow = headerRow + 1;
+  var insertAt = headerRow + 2;
 
-  var newLastRow = startRow + rowsBefore.length; // rowsBefore.length existing rows + the 1 just appended
+  // 1) Insert exactly one blank row at insertAt.
+  await apiBatchUpdate([{
+    insertDimension: {
+      range: { sheetId: sheetId, dimension: 'ROWS', startIndex: insertAt - 1, endIndex: insertAt },
+      inheritFromBefore: true
+    }
+  }]);
+
+  // 2) Write the new entry into that row (columns B onward only - column A untouched).
+  var endColLetter = String.fromCharCode(dateColLetter.charCodeAt(0) + numCols - 1);
+  var writeRange = sheetName + '!' + dateColLetter + insertAt + ':' + endColLetter + insertAt;
+  await apiUpdateValues(writeRange, [rowValues]);
+
+  // 3) Sort the whole data block (dataStartRow..newLastRow), columns B onward only.
+  var newLastRow = dataStartRow + rowsBefore.length; // old last row + 1 for the row we just inserted
   await apiBatchUpdate([{
     sortRange: {
       range: {
         sheetId: sheetId,
-        startRowIndex: startRow - 1,
+        startRowIndex: dataStartRow - 1,
         endRowIndex: newLastRow,
         startColumnIndex: 1, // column B onward only - column A (SI/SEQUENCE formula) is never touched
         endColumnIndex: APP_CONFIG.SORT_END_COLUMN_GUARD
@@ -559,8 +562,7 @@ async function addExpense(payload) {
   var cfg = APP_CONFIG.EXPENSE_COLS;
 
   var row = [isoToSheetDate(iso), category, description, cost];
-  var appendRange = APP_CONFIG.EXPENSE_SHEET + '!' + cfg.date + STATE.expenseStartRow + ':' + cfg.cost;
-  await appendAndSort(APP_CONFIG.EXPENSE_SHEET, STATE.expenseStartRow, STATE.expenses, appendRange, row, cfg.date);
+  await insertWriteSort(APP_CONFIG.EXPENSE_SHEET, APP_CONFIG.EXPENSE_HEADER_ROW, STATE.expenses, 4, row, cfg.date);
 }
 
 async function addEarning(payload) {
@@ -576,9 +578,9 @@ async function addEarning(payload) {
   var month = monthNames[d.getMonth()] + '-' + d.getFullYear();
 
   var row = [isoToSheetDate(iso), month, category, medium, description, amount];
-  var appendRange = APP_CONFIG.EARNING_SHEET + '!' + cfg.date + STATE.earningStartRow + ':' + cfg.amount;
-  await appendAndSort(APP_CONFIG.EARNING_SHEET, STATE.earningStartRow, STATE.earnings, appendRange, row, cfg.date);
+  await insertWriteSort(APP_CONFIG.EARNING_SHEET, APP_CONFIG.EARNING_HEADER_ROW, STATE.earnings, 6, row, cfg.date);
 }
+
 
 /* =========================================================================
  * Dashboard / trend computation (pure functions over STATE)
